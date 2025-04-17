@@ -1,6 +1,7 @@
 import sqlite3
 import typing
 
+from Columns import Column
 from Tables import Table
 from Errors import *
 from Definitions import *
@@ -21,20 +22,22 @@ class JoinedTable (Table):
 
     @property
     def TableName(self):
-        return f'{self._leftTable}/{self._rightTable}'
+        return f'{self._primaryT}/{self._secondT}'
 
 
     def __init__(self, primary: Table, secondary: Table, primaryCol: str, secondaryCol: str):
-        self._leftTable = primary.TableName
-        self._rightTable = secondary.TableName
-        self._leftcol = primaryCol
-        self._rightcol = secondaryCol
+        self._primaryT = primary.TableName
+        self._secondT = secondary.TableName
+        self._primaryKey = primaryCol
+        self._secondKey = secondaryCol
 
         # grab the client
         self._client = primary._client
 
         # init the columns dictionary and primary keys list
-        self._columns = {}  # this will hold _Column objects indexed by name
+        self._columns = {}  # this will hold two lists of columns, one for the primary and the other for the secondary
+        self._columns[primary.TableName] = []
+        self._columns[secondary.TableName] = []
         self._pks = []  # a list of the names of primary keys
         self._filters = []  # where clauses
 
@@ -44,13 +47,13 @@ class JoinedTable (Table):
 
                 # TODO add option to override this
                 # if this is the one of the join keys skip it, keep things clean
-                if f"{table.TableName}.{col}" == f"{self._leftTable}.{self._leftcol}":
+                if f"{table.TableName}.{col}" == f"{self._primaryT}.{self._primaryKey}":
                     continue
-                if f"{table.TableName}.{col}" == f"{self._rightTable}.{self._rightcol}":
+                if f"{table.TableName}.{col}" == f"{self._secondT}.{self._secondKey}":
                     continue
 
-                # copy the column into our set
-                self._columns[f"{table.TableName}.{col}"] = table._columns[col]
+                # copy the column into the correct list
+                self._columns[table.TableName].append(col)
 
                 if table._columns[col].PrimaryKey:
                     self._pks.append(f"{table.TableName}.{col}")
@@ -61,13 +64,24 @@ class JoinedTable (Table):
     # region Hooks
     # These functions are available for inheriting classes to override, to change the behavior across multiple calls
     # within the API.
-    def _hook_CheckColumn(self, col: str):
-        if col not in self._columns.keys():
-            raise ImaginaryColumn(self.TableName, col)
+    def _hook_CheckColumn(self, col: str) -> typing.Union[Column, None]:
+        normed = None
+        match col.count('.'):
+            case 0:
+                if col in self._columns[self._primaryT]:
+                    normed = next(c for c in self._columns[self._primaryT] if c.Name == col)
+                elif col in self._columns[self._secondT]:
+                    normed = next(c for c in self._columns[self._primaryT] if c.Name == col)
+            case 1:
+                [t, c] = col.split('.')
+                if t in self._columns.keys():
+                    if c in self._columns[t]:
+                        normed = next(cx for cx in self._columns[t] if cx.Name == c)
+            # all other cases (the _ case) are invalid, and should return None
+        return normed
 
-    def _hook_ValidateColumn(self, name: str, value: typing.Any):
-        if not self._columns[name].Validate(value):
-            raise InvalidColumnValue(self.TableName, name, value)
+    def _hook_ValidateColumn(self, col: Column, value: typing.Any) -> bool:
+        return col.Validate(value)
 
     def _hook_ApplyFilters(self, query: str, params: list) -> (str, list):
         # no filters, no work to do
@@ -107,62 +121,64 @@ class JoinedTable (Table):
     def _hook_InLineFilter(self, query: str, params: list, name: str, operator: ComparisonOps, value: typing.Any) -> \
     (str, list):
         # raises an error if the column name is invalid
-        self._hook_CheckColumn(name)
-
-        # TODO verify the operation is valid for the column type => _hook_VerifyOp
+        col = self._hook_CheckColumn(name)
+        if col is None:
+            raise ImaginaryColumn(self.TableName, name)
 
         # raises an error if the value is invalid for the column
-        self._hook_ValidateColumn(name, value)
+        if not self._hook_ValidateColumn(col, value):
+            raise InvalidColumnValue(self.TableName, col.Name, value)
 
         # add the where clause
-        query += f' Where {name} {operator.AsStr()} ?'
+        query += f' Where {self._normalizeColumn(col)} {operator.AsStr()} ?'
         params.append(value)
 
         return query, params
 
-    def _hook_BuildBaseQuery(self, operation: str, columns: list = []):
+    def _hook_BuildBaseQuery(self, operation: str, columns: list[Column] = []):
         if operation.lower() == 'select':
             # Select A.Cols, B.Cols from A left join B on A.ndx = B.a [where ....]
-            return f"Select {str.join(', ', columns)} From {self._leftTable} Left Join {self._rightTable} on {self._leftTable}.{self._leftcol} = {self._rightTable}.{self._rightcol} "
+            return f"Select {str.join(', ', columns)} From {self._primaryT} Left Join {self._secondT} on {self._primaryT}.{self._primaryKey} = {self._secondT}.{self._secondKey} "
 
         elif operation.lower() == 'insert':
             # insert into A (<cols>) values (?,?...); insert into B (<right_col>, <other cols> values (<left_col>, <other_vals>)
             if len(columns) == 1:
-                return f"Insert into {self._leftTable}({columns[0]}) values (?)"
+                return f"Insert into {self._primaryT}({columns[0]}) values (?)"
             elif len(columns) == 0:
                 raise Exception()  # TODO replace with custom error for empty column list
             else:
-                return f"Insert into {self._leftTable}({str.join(',', columns)}) values ({str.join(', ', ['?' for c in columns])})"
+                return f"Insert into {self._primaryT}({str.join(',', columns)}) values ({str.join(', ', ['?' for c in columns])})"
         # end if insert
 
         elif operation.lower() == 'delete':
-            return f"Delete from {self._leftTable}"
+            return f"Delete from {self._primaryT}"
 
         elif operation.lower() == 'update':
+            """
+            This needs some re-processing
+            if the column being set is in the primary table, just run the set with the primaryT's key...what if filter on secondary?
+            if the column is in the secondary then there will be a need to do teh 'join' via a seondary key = select key from primaryT....
+            if there are filters, they will need to be applied either within the main query or the secondary select, based on which table they actually touch
+            there is a lot more complexity here, maybe we need a query object to pass around so the whole thing, base query, filters, et all can be combined in one shot?
+            """
             if len(columns) == 1:
-                return f"Update {self._leftTable} set {columns[0] + ' = ?'}"
+                return f"Update {self._primaryT} set {columns[0] + ' = ?'}"
             elif len(columns) == 0:
                 raise Exception()  # TODO replace with custom error for empty column list
             else:
-                return f"Update {self._leftTable} set {str.join(', ', [x + ' = ?' for x in columns])}"
+                return f"Update {self._primaryT} set {str.join(', ', [x + ' = ?' for x in columns])}"
         else:
             raise Exception()  # TODO replace with custom error for invalid db operation
 
     # endregion
 
-    # region Helpers
-
-    def _normalizeColumn(self, name: str) -> str:
-        if name in self._columns.keys():
-            return name
-        elif f'{self._leftTable}.{name}' in self._columns.keys():
-            return f'{self._leftTable}.{name}'
+    def _normalizeColumn(self, col: Column) -> str:
+        if col in self._columns[self._primaryT]:
+            return f"{self._primaryT}.{col.Name}"
+        elif col in self._columns[self._secondT]:
+            return f"{self._secondT}.{col.Name}"
         else:
-            raise ImaginaryColumn(self.TableName, name)
-
-    # end _normalizeColumn
-
-    # endregion
+            raise ImaginaryColumn(self.TableName, col.Name)
 
     # region Old Junk
     # def GetAll(self) -> list:

@@ -4,6 +4,8 @@ import fnmatch
 from enum import IntEnum
 from sqlparse import tokens as Token
 
+from Definitions import ComparisonOps
+
 
 class StorageTypes(IntEnum):
     NULL = 0  # this value because it amuses me
@@ -299,7 +301,6 @@ class Column:
         # now catch anything in the db not in the ini configuration - hopefully this is a no-op
         for t in toks:
             pass
-
     # end __init__
 
     def Validate(self, value: typing.Any) -> bool:
@@ -408,5 +409,9 @@ class Column:
 
         return sql
     # make_sql
+
+    def ValidateOP(self, op: ComparisonOps) -> bool:
+        # TODO look at SQL operators and sqlite support thereof and verify the operation is correct for this datatype
+        return True
 
 # end Class Column

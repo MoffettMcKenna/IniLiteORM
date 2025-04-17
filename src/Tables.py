@@ -1,6 +1,8 @@
 import configparser
 import sqlite3
 import typing
+from os import MFD_ALLOW_SEALING
+
 from sqlparse import engine, tokens as Token
 
 from Errors import *
@@ -75,7 +77,6 @@ class Table:
         # if there were any columns in the db not also in ini file we are out of sync
         if len(toks.keys()) != 0:
             self._valid = False
-
     # end init()
 
     def Create(self):
@@ -102,13 +103,13 @@ class Table:
     # These functions are available for inheriting classes to override, to change the behavior across multiple calls
     # within the API.
 
-    def _hook_CheckColumn(self, col: str):
+    def _hook_CheckColumn(self, col: str) -> typing.Union[Column, None]:
         if col not in self._columns.keys():
-            raise ImaginaryColumn(self.TableName, col)
+            return None
+        return self._columns[col]
 
-    def _hook_ValidateColumn(self, name: str, value: typing.Any):
-        if not self._columns[name].Validate(value):
-            raise InvalidColumnValue(self.TableName, name, value)
+    def _hook_ValidateColumn(self, col: Column, value: typing.Any) -> bool:
+        return col.Validate(value)
 
     def _hook_ApplyFilters(self, query: str, params: list) -> (str, list):
         # no filters, no work to do
@@ -147,12 +148,16 @@ class Table:
 
     def _hook_InLineFilter(self, query: str, params: list, name: str, operator: ComparisonOps, value: typing.Any) -> (str, list):
         # raises an error if the column name is invalid
-        self._hook_CheckColumn(name)
+        col = self._hook_CheckColumn(name)
+        if col is None:
+            raise ImaginaryColumn(self.TableName, name)
 
-        # TODO verify the operation is valid for the column type => _hook_VerifyOp
+        if not col.ValidateOP(operator):
+            raise InvalidOperation(self.TableName, col, operator)
 
         # raises an error if the value is invalid for the column
-        self._hook_ValidateColumn(name, value)
+        if not self._hook_ValidateColumn(col, value):
+            raise InvalidColumnValue(self.TableName, col.Name, value)
 
         # add the where clause
         query += f' Where {name} {operator.AsStr()} ?'
@@ -183,12 +188,6 @@ class Table:
         else:
             raise Exception() #TODO replace with custom error for invalid db operation
 
-    def _normalizeColumn(self, name: str) -> str:
-        if name in self._columns.keys():
-            return name
-        else:
-            raise ImaginaryColumn(self.TableName, name)
-
     #endregion
 
     #region DB Interactions
@@ -200,7 +199,7 @@ class Table:
 
         :param other: The table to join with.
         :param otherCol: The name of the column from the other table to join with.
-        :param myCol: The the name of the column from within this table to match to otherCol.
+        :param myCol: The name of the column from within this table to match to otherCol.
         :return:
         """
         pass
@@ -225,7 +224,8 @@ class Table:
 
         # sanity check the columns
         for c in columns:
-            self._hook_CheckColumn(c)
+            if self._hook_CheckColumn(c) is None:
+                raise ImaginaryColumn(self.TableName, c.Name)
         # end for c
 
         # initialize the select statement
@@ -251,7 +251,9 @@ class Table:
 
         # grab the values from the parameter
         for k in values.keys():
-            self._hook_CheckColumn(k)
+            if self._hook_CheckColumn(k) is None:
+                # TODO add logging
+                continue
 
             # remove the column as needing a default
             cols.remove(k)
@@ -294,10 +296,13 @@ class Table:
         params = [value]  # this will be the second arg with the order parameters into the query
 
         # verify the column
-        self._hook_CheckColumn(name)
+        col = self._hook_CheckColumn(name)
+        if col is None:
+            raise ImaginaryColumn(self.TableName, name)
 
         # verify the value is legal
-        self._hook_ValidateColumn(name, value)
+        if not self._hook_ValidateColumn(col, value):
+            raise InvalidColumnValue(self.TableName, col.Name, value)
 
         # create the base update statement
         # make sure to wrap text values in ""
@@ -368,13 +373,13 @@ class Table:
         :param value: The threshold or matching value to filter based on.
         """
 
-        # verify the column
-        name = self._normalizeColumn(name)
-
-        # TODO verify the operation is valid for the column type
+        col = self._hook_CheckColumn(name)
+        if col is None:
+            raise ImaginaryColumn(self.TableName, name)
 
         # verify the value is the correct type
-        self._hook_ValidateColumn(name, value)
+        if not self._hook_ValidateColumn(col, value):
+            raise InvalidColumnValue(self.TableName, col.Name, value)
 
         # Don't think we need this - tested with param'd queries and None is accepted in several cases
 #        if value is None:
@@ -474,7 +479,10 @@ class Table:
     # end parse_create()
 
     def __eq__(self, other: object) -> bool:
-        return False
+        if isinstance(other, Table):
+            return self.Build_SQL() == other.Build_SQL()
+        else:
+            return False
 
     @property
     def IsValid(self):
