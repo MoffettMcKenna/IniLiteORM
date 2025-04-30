@@ -1,4 +1,5 @@
 import configparser
+from pathlib import PurePath
 
 import pytest
 import sqlite3
@@ -96,6 +97,9 @@ def dirtyDB():
 @pytest.fixture
 def config():
     cp = configparser.ConfigParser()
+    p = PurePath(os.getcwd())
     file = 'test.ini'
+    if p.name.lower() != 'test':
+        file = str(p.joinpath('test').joinpath('test.ini'))
     cp.read(file)
     return cp
