@@ -2,9 +2,9 @@ name: UnitTests
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "InDevelopment", "Testing" ]
   pull_request:
-    branches: [ "main" ]
+    branches: [ "main", "InDevelopment", "Testing" ]
 
 permissions:
   contents: read
