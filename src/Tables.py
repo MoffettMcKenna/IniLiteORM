@@ -211,7 +211,7 @@ class Table:
         """
         return self.Get(list(self._columns.keys()))
 
-    def Get(self, columns: list) -> list:
+    def Get(self, columns: list[str]) -> list:
         """
         Retrieves all values of a set of columns.  If the where clause is specified then only the matching values are
         returned.
@@ -225,7 +225,7 @@ class Table:
         # sanity check the columns
         for c in columns:
             if self._hook_CheckColumn(c) is None:
-                raise ImaginaryColumn(self.TableName, c.Name)
+                raise ImaginaryColumn(self.TableName, c)
         # end for c
 
         # initialize the select statement
@@ -252,8 +252,7 @@ class Table:
         # grab the values from the parameter
         for k in values.keys():
             if self._hook_CheckColumn(k) is None:
-                # TODO add logging
-                continue
+                raise ImaginaryColumn(self.TableName, k)
 
             # remove the column as needing a default
             cols.remove(k)
