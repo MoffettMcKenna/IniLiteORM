@@ -1,8 +1,10 @@
-## Redesign Notes
+# Redesign Notes
 
-# Goal
+## Goal
 Need to represent the query not as a string but an object right up to execution.
 stringify right at the edge before execution
+
+## Samples
 
 `select * from tableA`
 
@@ -12,29 +14,31 @@ stringify right at the edge before execution
 
 `update tableA set field = (select field from tableB where field = value)`
 
-# Tables
+## Objects
+
+### Tables
 a collection of rows and columns
 - Rows hold the data
 - Column objects provide the validation and filtering
 The operation methods return a query object setup to perform the base operation.  More can be accumulated onto it as needed.
 
-
-# Columns
+### Columns
 Tracks the metadata about the data in that column
 - knows type
 - primary key, foreign key
 - default?
 
-# Queries
+### Queries
 Gathers the elements for a single execution of a query with the possibility of being re-used.
 - each query runs against a primary table and however many secondaries
 - knows the operation being performed, and the set of columns from each table
 This is the muscle of the library, and will be the objects interacted with the most. 
 
 
-# Filters
+### Filters
 Filters are the where clauses
-- use Columns 
+- use Columns to validation the arguments
+- needs to be able to use a query in the 
 
-# Concerns
+## Concerns
 - **Performance** A complicated query will 
