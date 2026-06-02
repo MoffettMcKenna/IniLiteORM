@@ -5,8 +5,11 @@ Need to represent the query not as a string but an object right up to execution.
 stringify right at the edge before execution
 
 `select * from tableA`
+
 `select * from tableA where field = value`
+
 `select col1, col2, col3, from tableA where field < value and field != value`
+
 `update tableA set field = (select field from tableB where field = value)`
 
 # Tables
