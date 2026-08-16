@@ -32,6 +32,11 @@ WHERE EXISTS (
     SELECT 1 FROM employees WHERE employees.dept_id = departments.id
 )`
 
+`SELECT employees.name, departments.dept_name, employees.salary
+FROM employees, departments
+WHERE employees.dept_id = departments.id 
+  AND departments.location = 'Chicago'
+  AND employees.salary > 75000`
 
 ## Objects
 
@@ -62,4 +67,5 @@ Filters are the where clauses
 - needs to be able to use a query in the right-hand side
 
 ## Concerns
-- **Performance** A complicated query might require a larger number of objects, representing a heavy memory footprint. 
+- **Memory Usage** A complicated query might require a larger number of objects, representing a heavy memory footprint. 
+- **Processing Read Data** A generator is needed to manage the possibility of having to process large amounts of data from a get statement.
